@@ -24,12 +24,14 @@ is provably confined to the region between two anchors. Everything outside is
 never sent to be rewritten — it cannot drift.
 
 `vibe-fim` wraps Mistral's **Codestral FIM** in a one-call surgical-patch
-primitive and *verifies* the guarantee on every edit: the output must start with
-the exact prefix and end with the exact suffix, or the patch is rejected.
+primitive. The bytes outside the region are the original slices, concatenated
+unchanged — so *bounded scope* is structural. On top of that it runs the checks
+that can actually **fail** (below), so a bad completion is caught, not shipped.
 
-> This is the one thing competing agent CLIs can't express: none of Claude Code,
-> Codex, or vanilla `vibe` has a FIM patch primitive. Codestral does. `vibe-fim`
-> turns it into a bounded edit you can trust.
+> No agent CLI exposes a *verified bounded-edit* primitive. Claude Code and Codex
+> edit by regenerating blocks; plain `vibe` has no FIM patch op. Codestral's FIM
+> is what makes a provably-bounded edit possible, and `vibe-fim` turns it into one
+> an agent can call and check.
 
 ## Install
 
@@ -54,13 +56,29 @@ vibe-fim patch --file units.py \
 The scope report goes to stderr:
 
 ```
-[BOUNDED] edit confined between anchors.
+[BOUNDED + PARSES] edit confined between anchors.
   frozen prefix: 142 chars (unchanged)
   frozen suffix: 98 chars (unchanged)
   region: 31 chars -> 39 chars
 ```
 
-Drop `--dry-run` to write the file in place.
+Drop `--dry-run` to write the file in place. If the patched file no longer
+parses, the CLI **refuses to write** (exit 3) unless you pass `--allow-broken`.
+
+### Agent-callable
+
+An agent shells out and consumes a stable JSON contract — no screen-scraping:
+
+```bash
+vibe-fim patch --stdin --before "…" --after "…" --name app.py --json
+# {"bounded": true, "parses": true, "scope_report": "...", "unified_diff": "...",
+#  "frozen_prefix_chars": 142, "frozen_suffix_chars": 98, "trimmed_overlap": 0,
+#  "new_middle": "...", "wrote": false}
+```
+
+`--stdin`/`--text` pass the source inline (no disk round-trip); on error the
+record is `{"bounded": false, "error": "..."}` with a non-zero exit, so a loop
+can branch. There is also an MCP server — see **Wiring into an agent** below.
 
 ## Library
 
@@ -74,8 +92,9 @@ result = patch_region(
     hint="round the result to 1 decimal place",
 )
 
-assert result.bounded                       # verified, not assumed
+assert result.bounded                         # structural invariant
 assert source_code.startswith(result.prefix)  # prefix is byte-identical
+assert result.parses is not False             # patched file still parses
 new_source = result.text
 ```
 
@@ -90,41 +109,69 @@ Anchors must be **unique** in the file. A missing or ambiguous anchor raises
 `FimError` instead of guessing — surgical edits should never be applied to the
 wrong place.
 
-### Robustness: no duplicated lines
+## Verification that can fail
 
-FIM models sometimes re-emit the first lines of the suffix (or the last lines of
-the prefix) inside the middle. `patch_region` detects and strips that overlap —
-but **only at a line boundary**, so a coincidental shared `}` or `)` is never
-removed. When it happens, `result.trimmed_overlap` reports how many characters
-were de-duplicated.
+Bounded scope is structural (the prefix/suffix are the original slices). The
+value is in the checks that a bad completion can actually trip:
 
-## The guarantee, benchmarked
+- **Boundary echo.** FIM models sometimes re-emit the start of the suffix (or end
+  of the prefix) inside the middle — duplicating code, on the same line, not just
+  across a line break. `patch_region` detects and strips a real re-emission (a run
+  of ≥4 non-whitespace chars) while leaving a coincidental shared `}` or a
+  boundary newline alone. `result.trimmed_overlap` reports what was removed.
+- **Truncation.** A completion cut off at `max_tokens` is an incomplete middle.
+  `finish_reason == "length"` raises instead of shipping a half-written edit.
+- **Parse gate.** For languages we can parse with the stdlib (Python via `ast`),
+  the patched file is re-parsed; `result.parses` is `True`/`False`/`None`, the
+  report shows `[BOUNDED + PARSES]` / `[BOUNDED + DOES NOT PARSE]`, and the CLI
+  refuses to write a non-parsing result by default.
 
-`examples/bench.py` runs the same edit ("round `to_celsius` to 1 decimal") two
-ways and counts changed lines *outside the target function*:
+## The guarantee, and the drift — demonstrated
 
-| approach | collateral changes outside target | guaranteed? |
-|---|---|---|
-| **surgical FIM** (`vibe-fim`) | **0** | yes — by construction |
-| block regeneration (chat returns the file) | drifts (e.g. dropped the file's trailing newline in our run) | no |
+Two separate claims, kept separate:
 
-The block-regen baseline produced the *correct* body — and still silently
-altered the file outside the edit. FIM can't, because the prefix and suffix are
-never regenerated.
+- **The guarantee** is structural: surgical FIM changes **0** lines outside the
+  target, by construction, because the frozen regions are never regenerated.
+- **The drift** is measured. `examples/bench.py` replays a **committed Codestral
+  transcript** (`examples/fixtures/`) and counts collateral with one
+  newline-aware counter for both approaches:
+
+```
+surgical FIM      : 0 lines changed outside target
+block regeneration: 2 lines changed outside target   # dropped the file's trailing newline
+```
+
+It runs **offline** by default (no key, same numbers for every reviewer); pass
+`--live` to re-capture from the API. The block-regen baseline produced the
+*correct* body and still silently altered the file outside the edit.
 
 ```bash
-MISTRAL_API_KEY=... python examples/bench.py
+python examples/bench.py            # offline replay of the committed fixture
+MISTRAL_API_KEY=... python examples/bench.py --live
 ```
+
+## Wiring into an agent
+
+`vibe-fim patch --json` is the stable contract for shelling out. For a native
+tool, install the optional MCP server and point any MCP client at it:
+
+```bash
+pip install "vibe-fim[mcp]"
+vibe-fim-mcp          # stdio MCP server exposing one tool: surgical_patch
+```
+
+The tool returns the unified diff plus the scope report, so the agent sees the
+bounded proof — not just a success flag. (The base package stays
+zero-dependency; the `mcp` SDK is pulled in only by the `[mcp]` extra.)
 
 ## How it works
 
 1. Locate the unique `before` and `after` anchors.
 2. `prefix = text[:end_of_before]`, `suffix = text[start_of_after:]`.
-3. Send `(prefix, suffix)` to Codestral FIM → `middle`.
-4. `new_text = prefix + middle + suffix`.
-5. **Verify** `new_text.startswith(prefix) and new_text.endswith(suffix)` —
-   else raise. The bytes outside the region are identical because they're the
-   same object slices, concatenated unchanged.
+3. Send `(prefix, suffix)` to Codestral FIM → `middle` (de-duplicated, truncation-checked).
+4. `new_text = prefix + middle + suffix`; the bytes outside the region are the
+   same slices, concatenated unchanged.
+5. Run the parse gate and surface the result.
 
 ## License
 

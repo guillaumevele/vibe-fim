@@ -1,0 +1,89 @@
+"""A tiny MCP stdio server exposing vibe-fim's bounded edit as one tool.
+
+Install with the optional extra and run it; point any MCP client (including
+Mistral `vibe`) at it:
+
+    pip install "vibe-fim[mcp]"
+    vibe-fim-mcp
+
+The base package stays dependency-free — `mcp` is imported here only, and only
+pulled in by the `[mcp]` extra.
+"""
+from __future__ import annotations
+
+import difflib
+import functools
+from pathlib import Path
+
+from .fim import FimError, codestral_fim, patch_region
+
+
+def _build_server():
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:  # pragma: no cover - exercised via the extra
+        raise SystemExit(
+            "vibe-fim-mcp needs the MCP SDK. Install it with:\n"
+            '    pip install "vibe-fim[mcp]"'
+        ) from exc
+
+    server = FastMCP("vibe-fim")
+
+    @server.tool()
+    def surgical_patch(
+        file: str,
+        before_anchor: str,
+        after_anchor: str,
+        instruction: str = "",
+        model: str = "codestral-latest",
+        dry_run: bool = True,
+    ) -> str:
+        """Rewrite ONLY the region between two unique anchors using Codestral
+        fill-in-the-middle. The prefix and suffix are byte-identical to the
+        original — the edit is provably bounded — and the result is rejected if
+        it no longer parses. Returns the scope report and unified diff so the
+        edit's bounds are visible, not just a success flag.
+
+        - file:          path to the file to edit.
+        - before_anchor: unique line; the frozen prefix ends right after it.
+        - after_anchor:  unique line; the frozen suffix starts right at it.
+        - instruction:   optional steer (sent as a comment, never written).
+        - dry_run:       when true (default), do not write — only show the diff.
+        """
+        path = Path(file)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"ERROR: cannot read {file}: {exc}"
+
+        backend = functools.partial(codestral_fim, model=model)
+        try:
+            result = patch_region(original, before_anchor, after_anchor,
+                                  hint=instruction, fim_fn=backend, filename=file)
+        except FimError as exc:
+            return f"ERROR: {exc}"
+
+        diff = "".join(difflib.unified_diff(
+            original.splitlines(keepends=True),
+            result.text.splitlines(keepends=True),
+            fromfile=f"a/{file}", tofile=f"b/{file}",
+        ))
+        wrote = False
+        if not dry_run and result.parses is not False:
+            path.write_text(result.text, encoding="utf-8")
+            wrote = True
+
+        status = "wrote file" if wrote else "dry run (not written)"
+        if result.parses is False:
+            status = "NOT written — patched result does not parse"
+        return f"{result.scope_report()}\n\nstatus: {status}\n\n{diff or '(no change)'}"
+
+    return server
+
+
+def main() -> None:
+    _build_server().run()
+
+
+if __name__ == "__main__":
+    main()

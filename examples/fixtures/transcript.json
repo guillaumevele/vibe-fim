@@ -1,0 +1,11 @@
+{
+  "source": "Codestral (codestral-latest, temperature 0), captured via the Mistral API",
+  "edit_request": "make to_celsius round the result to 1 decimal place",
+  "anchors": {
+    "before": "def to_celsius(f):",
+    "after": "\n\ndef to_fahrenheit"
+  },
+  "fim_middle": "\n    return round((f - 32) * 5 / 9, 1)\n",
+  "block_regen_drift": "dropped the file's trailing newline (regen_after.py ends at str(c), no final \\n)",
+  "note": "Block regen produced the correct to_celsius body AND silently altered the file outside the edit. Surgical FIM cannot: prefix/suffix are the original slices."
+}
