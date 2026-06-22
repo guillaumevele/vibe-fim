@@ -1,9 +1,12 @@
 name: Publish to PyPI
 
+# Publishes via PyPI Trusted Publishing (OIDC). Before enabling the `release`
+# trigger, configure a pending publisher on PyPI for this repo + the `pypi`
+# environment + this workflow. Until then, run manually from the Actions tab.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+  # release:
+  #   types: [published]
 
 permissions:
   contents: read
