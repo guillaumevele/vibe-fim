@@ -65,6 +65,27 @@ The scope report goes to stderr:
 Drop `--dry-run` to write the file in place. If the patched file no longer
 parses, the CLI **refuses to write** (exit 3) unless you pass `--allow-broken`.
 
+### Many edits, one transaction
+
+`patch-many` applies **N bounded edits to one file as a single all-or-nothing
+transaction** — the thing the FIM ecosystem (all autocomplete) does not do. Every
+segment *between and around* the regions stays byte-identical, the assembled file
+is parse-checked **once**, and the whole result is written or nothing is. A model
+that drifts in one region cannot corrupt the others; a result that doesn't parse
+is rejected as a unit.
+
+```bash
+vibe-fim patch-many --file app.py --json --edits '[
+  {"before": "def to_celsius(f):", "after": "\ndef to_fahrenheit", "hint": "round to 1dp"},
+  {"before": "def format_row(f):", "after": "\nTABLE_FOOTER",      "hint": "pad to 6 cols"}
+]'
+# {"bounded": true, "parses": true, "regions": 2, ... "wrote": true}
+```
+
+Edits must be in file order and non-overlapping; an ambiguous/missing anchor, an
+overlap, or a non-parsing result rejects the **whole** transaction (nothing is
+applied). `from vibe_fim import patch_regions` for the same as a library call.
+
 ### Agent-callable
 
 An agent shells out and consumes a stable JSON contract — no screen-scraping:

@@ -60,7 +60,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="do not write; show the diff")
     p.add_argument("--allow-broken", action="store_true", help="write even if the result no longer parses")
 
+    pm = sub.add_parser("patch-many",
+                        help="apply N bounded edits as one all-or-nothing transaction")
+    msrc = pm.add_mutually_exclusive_group(required=True)
+    msrc.add_argument("--file", help="file to edit in place")
+    msrc.add_argument("--text", help="edit this literal text instead of a file")
+    msrc.add_argument("--stdin", action="store_true", help="read the text from stdin")
+    esrc = pm.add_mutually_exclusive_group(required=True)
+    esrc.add_argument("--edits", help='JSON: [{"before":..,"after":..,"hint":..}, ...] in file order')
+    esrc.add_argument("--edits-file", help="path to that JSON")
+    pm.add_argument("--model", default=DEFAULT_MODEL)
+    pm.add_argument("--max-tokens", type=int, default=1024)
+    pm.add_argument("--temperature", type=float, default=0.0)
+    pm.add_argument("--name", help="filename hint for the parser/comment style")
+    pm.add_argument("--json", action="store_true")
+    pm.add_argument("--dry-run", action="store_true")
+    pm.add_argument("--allow-broken", action="store_true")
+
     args = parser.parse_args(argv)
+    if args.command == "patch-many":
+        return _cmd_patch_many(args)
 
     # Resolve the source text and the filename used for parsing / comment style.
     if args.file:
@@ -112,6 +131,75 @@ def main(argv: list[str] | None = None) -> int:
     print(result.scope_report(), file=sys.stderr)
     if will_write:
         sys.stderr.write(f"wrote {args.file}\n")
+    elif args.file and args.dry_run:
+        sys.stdout.write(diff or "(no change)\n")
+    else:
+        sys.stdout.write(result.text)
+    return 0
+
+
+def _resolve_source(args):
+    """Return (original_text, name, path_or_None) for --file/--text/--stdin."""
+    if args.file:
+        try:
+            return Path(args.file).read_text(encoding="utf-8"), args.file, Path(args.file)
+        except OSError as exc:
+            raise FimError(f"cannot read {args.file}: {exc}")
+    if args.stdin:
+        return sys.stdin.read(), args.name, None
+    return args.text, args.name, None
+
+
+def _cmd_patch_many(args) -> int:
+    from .fim import patch_regions
+
+    try:
+        original, name, path = _resolve_source(args)
+    except FimError as exc:
+        return _fail(str(exc), args.json, code=2)
+
+    raw = args.edits if args.edits else Path(args.edits_file).read_text(encoding="utf-8")
+    try:
+        edits = json.loads(raw)
+        assert isinstance(edits, list)
+    except (ValueError, AssertionError):
+        return _fail("--edits must be a JSON array of {before, after, hint}", args.json, code=2)
+
+    backend = functools.partial(codestral_fim, model=args.model,
+                                max_tokens=args.max_tokens, temperature=args.temperature)
+    try:
+        result = patch_regions(original, edits, fim_fn=backend, filename=name)
+    except FimError as exc:
+        return _fail(str(exc), args.json, code=1)
+
+    diff = _diff(original, result.text, name or "input")
+    if result.parses is False and not args.allow_broken:
+        msg = "transaction rejected: patched result does not parse (use --allow-broken)"
+        if args.json:
+            json.dump({"bounded": result.bounded, "parses": False, "regions": result.region_count,
+                       "error": msg, "unified_diff": diff}, sys.stdout)
+            sys.stdout.write("\n")
+            return 3
+        print(result.scope_report(), file=sys.stderr)
+        print(diff, file=sys.stderr)
+        print(f"vibe-fim: {msg}", file=sys.stderr)
+        return 3
+
+    will_write = bool(args.file) and not args.dry_run
+    if will_write:
+        path.write_text(result.text, encoding="utf-8")
+
+    if args.json:
+        json.dump({"bounded": result.bounded, "parses": result.parses,
+                   "regions": result.region_count, "trimmed_overlap": result.trimmed_overlap,
+                   "scope_report": result.scope_report(), "unified_diff": diff,
+                   "wrote": will_write}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+
+    print(result.scope_report(), file=sys.stderr)
+    if will_write:
+        sys.stderr.write(f"wrote {args.file} ({result.region_count} regions)\n")
     elif args.file and args.dry_run:
         sys.stdout.write(diff or "(no change)\n")
     else:

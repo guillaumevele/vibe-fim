@@ -302,3 +302,117 @@ def patch_region(
         trimmed_overlap=trimmed,
         parses=parses,
     )
+
+
+@dataclass(frozen=True)
+class MultiPatchResult:
+    text: str                 # the new, full file content (or the original if not applicable)
+    frozen: list              # the inter-region segments, byte-identical slices of the original
+    new_middles: list         # the model's output for each region (after echo de-dup)
+    old_middles: list         # what each region held before
+    bounded: bool             # every frozen segment preserved exactly (by construction)
+    trimmed_overlap: int = 0  # total chars de-duplicated across regions
+    parses: bool | None = None  # did the assembled file still parse? None = not checked
+
+    @property
+    def region_count(self) -> int:
+        return len(self.new_middles)
+
+    def scope_report(self) -> str:
+        tag = "BOUNDED" if self.bounded else "SCOPE VIOLATION"
+        if self.parses is True:
+            tag += " + PARSES"
+        elif self.parses is False:
+            tag += " + DOES NOT PARSE"
+        frozen_chars = sum(len(s) for s in self.frozen)
+        report = (
+            f"[{tag}] transactional patch of {self.region_count} region(s).\n"
+            f"  frozen (untouched) between/around regions: {frozen_chars} chars in "
+            f"{len(self.frozen)} segment(s)\n"
+            f"  regions rewritten: "
+            + ", ".join(f"{len(o)}->{len(n)}" for o, n in zip(self.old_middles, self.new_middles))
+        )
+        if self.trimmed_overlap:
+            report += f"\n  de-duplicated {self.trimmed_overlap} re-emitted chars"
+        return report
+
+
+def patch_regions(
+    text: str,
+    edits: list,
+    *,
+    fim_fn: FimFn | None = None,
+    filename: str | None = None,
+    verify: bool = True,
+) -> MultiPatchResult:
+    """Apply N bounded FIM edits to one file as a single ALL-OR-NOTHING transaction.
+
+    Each edit is a dict ``{"before": str, "after": str, "hint": str = ""}``. The
+    edits must be in file order and non-overlapping. Every segment *between and
+    around* the regions stays byte-identical, the assembled file is parse-checked
+    once, and the caller writes the whole result or nothing — there is no partial
+    application. A FIM model that drifts in one region cannot corrupt the others,
+    and a result that no longer parses is rejected as a unit.
+    """
+    if not edits:
+        raise FimError("no edits given.")
+    fim_fn = fim_fn or codestral_fim
+
+    # 1. Locate every anchor on the ORIGINAL text and validate the whole plan
+    #    up front (atomic precondition: if any anchor is bad, nothing is applied).
+    spans = []  # (region_start, region_end, hint)
+    for i, e in enumerate(edits):
+        before, after = e.get("before", ""), e.get("after", "")
+        _, before_end = _locate_unique(text, before, f"edit[{i}].before")
+        after_start, _ = _locate_unique(text, after, f"edit[{i}].after")
+        if after_start < before_end:
+            raise FimError(f"edit[{i}]: `after` occurs before `before`.")
+        spans.append((before_end, after_start, e.get("hint", "")))
+    order = sorted(range(len(spans)), key=lambda i: spans[i][0])
+    if order != list(range(len(spans))):
+        raise FimError("edits must be given in file order.")
+    for i in range(1, len(spans)):
+        if spans[i][0] < spans[i - 1][1]:
+            raise FimError(f"edit[{i}] overlaps edit[{i - 1}].")
+
+    # 2. Build the new text left-to-right. Each region's FIM call sees the file
+    #    edited so far on the left and the original remainder on the right.
+    new_text = ""
+    frozen, new_middles, old_middles = [], [], []
+    trimmed_total = 0
+    prev_end = 0
+    for (rstart, rend, hint) in spans:
+        segment = text[prev_end:rstart]      # frozen: an original slice, never rewritten
+        frozen.append(segment)
+        prefix_ctx = new_text + segment
+        suffix_ctx = text[rend:]
+        fim_prefix = prefix_ctx
+        if hint:
+            comment = _comment_line(filename, prefix_ctx, hint)
+            if comment:
+                fim_prefix = f"{prefix_ctx}\n{comment}\n"
+        raw_middle = fim_fn(fim_prefix, suffix_ctx)
+        middle, trimmed = _trim_boundary_overlap(raw_middle, fim_prefix, suffix_ctx)
+        trimmed_total += trimmed
+        old_middles.append(text[rstart:rend])
+        new_middles.append(middle)
+        new_text = prefix_ctx + middle
+        prev_end = rend
+    tail = text[prev_end:]
+    frozen.append(tail)
+    new_text += tail
+
+    # 3. Structural invariant: text == frozen[0] + m1 + frozen[1] + m2 + ... — every
+    #    inter-region segment is preserved verbatim, in place.
+    expected = frozen[0]
+    for i, middle in enumerate(new_middles):
+        expected += middle + frozen[i + 1]
+    bounded = new_text == expected
+    if not bounded:
+        raise FimError("a frozen segment was not preserved (FIM contract violated).")
+    parses = _check_parses(new_text, filename) if verify else None
+    return MultiPatchResult(
+        text=new_text, frozen=frozen, new_middles=new_middles,
+        old_middles=old_middles, bounded=bounded, trimmed_overlap=trimmed_total,
+        parses=parses,
+    )

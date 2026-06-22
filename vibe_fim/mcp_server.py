@@ -82,6 +82,48 @@ def _build_server():
             status = "NOT written — patched result does not parse"
         return f"{result.scope_report()}\n\nstatus: {status}\n\n{diff or '(no change)'}"
 
+    @server.tool()
+    def surgical_patch_many(
+        file: str,
+        edits: list,
+        model: str = "codestral-latest",
+        dry_run: bool = True,
+    ) -> str:
+        """Apply N bounded FIM edits to one file as a single ALL-OR-NOTHING
+        transaction. `edits` is a list of {before_anchor, after_anchor,
+        instruction?} in file order, non-overlapping. Every segment between and
+        around the regions stays byte-identical, the assembled file is
+        parse-checked once, and the whole result is written or nothing is — a
+        model drifting in one region cannot corrupt the others. Returns the scope
+        report + unified diff."""
+        from .fim import patch_regions
+
+        path = Path(file)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"ERROR: cannot read {file}: {exc}"
+        spec = [{"before": e.get("before_anchor", e.get("before", "")),
+                 "after": e.get("after_anchor", e.get("after", "")),
+                 "hint": e.get("instruction", e.get("hint", ""))} for e in edits]
+        backend = functools.partial(codestral_fim, model=model)
+        try:
+            result = patch_regions(original, spec, fim_fn=backend, filename=file)
+        except FimError as exc:
+            return f"ERROR: {exc}"
+
+        diff = "".join(difflib.unified_diff(
+            original.splitlines(keepends=True), result.text.splitlines(keepends=True),
+            fromfile=f"a/{file}", tofile=f"b/{file}"))
+        wrote = False
+        if not dry_run and result.parses is not False:
+            path.write_text(result.text, encoding="utf-8")
+            wrote = True
+        status = "wrote file" if wrote else "dry run (not written)"
+        if result.parses is False:
+            status = "NOT written — transaction rejected (result does not parse)"
+        return f"{result.scope_report()}\n\nstatus: {status}\n\n{diff or '(no change)'}"
+
     return server
 
 
