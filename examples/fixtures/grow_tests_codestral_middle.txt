@@ -1,0 +1,14 @@
+below():
+    assert clamp(-1, 0, 10) == 0
+
+
+def test_clamp_above():
+    assert clamp(11, 0, 10) == 10
+
+
+def test_clamp_lo():
+    assert clamp(0, 0, 10) == 0
+
+
+def test_clamp_hi():
+    assert clamp(10, 0, 10) == 10

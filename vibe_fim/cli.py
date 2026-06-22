@@ -77,9 +77,26 @@ def main(argv: list[str] | None = None) -> int:
     pm.add_argument("--dry-run", action="store_true")
     pm.add_argument("--allow-broken", action="store_true")
 
+    g = sub.add_parser("grow-tests",
+                       help="append PROVABLY-additive tests (old tests stay green by execution)")
+    gsrc = g.add_mutually_exclusive_group(required=True)
+    gsrc.add_argument("--file", help="pytest file to grow in place")
+    gsrc.add_argument("--text", help="pytest source instead of a file")
+    g.add_argument("--focus", default="", help="what to test (sent as a steer)")
+    g.add_argument("--model", default=DEFAULT_MODEL)
+    g.add_argument("--max-tokens", type=int, default=2048)
+    g.add_argument("--temperature", type=float, default=0.2)
+    g.add_argument("--name", help="filename hint (with --text)")
+    g.add_argument("--no-run", action="store_true", help="skip the pytest proof (then it is only INSERTED, not proven additive)")
+    g.add_argument("--json", action="store_true")
+    g.add_argument("--dry-run", action="store_true")
+    g.add_argument("--allow-broken", action="store_true", help="write even if not provably additive")
+
     args = parser.parse_args(argv)
     if args.command == "patch-many":
         return _cmd_patch_many(args)
+    if args.command == "grow-tests":
+        return _cmd_grow_tests(args)
 
     # Resolve the source text and the filename used for parsing / comment style.
     if args.file:
@@ -145,7 +162,7 @@ def _resolve_source(args):
             return Path(args.file).read_text(encoding="utf-8"), args.file, Path(args.file)
         except OSError as exc:
             raise FimError(f"cannot read {args.file}: {exc}")
-    if args.stdin:
+    if getattr(args, "stdin", False):
         return sys.stdin.read(), args.name, None
     return args.text, args.name, None
 
@@ -200,6 +217,56 @@ def _cmd_patch_many(args) -> int:
     print(result.scope_report(), file=sys.stderr)
     if will_write:
         sys.stderr.write(f"wrote {args.file} ({result.region_count} regions)\n")
+    elif args.file and args.dry_run:
+        sys.stdout.write(diff or "(no change)\n")
+    else:
+        sys.stdout.write(result.text)
+    return 0
+
+
+def _cmd_grow_tests(args) -> int:
+    from .testgen import grow_tests, pytest_runner
+
+    try:
+        original, name, path = _resolve_source(args)
+    except FimError as exc:
+        return _fail(str(exc), args.json, code=2)
+    name = name or "tests.py"
+
+    backend = functools.partial(codestral_fim, model=args.model,
+                                max_tokens=args.max_tokens, temperature=args.temperature)
+    runner = None if args.no_run else pytest_runner
+    try:
+        result = grow_tests(original, filename=name, focus=args.focus,
+                            fim_fn=backend, runner=runner)
+    except FimError as exc:
+        return _fail(str(exc), args.json, code=1)
+
+    diff = _diff(original, result.text, name)
+    # Exit code: 3 if it does not parse, 4 if the additive proof failed, else 0.
+    blocked = (not result.additive) and not args.allow_broken
+    code = 0
+    if blocked:
+        code = 3 if result.parses is False else 4
+
+    if args.json:
+        json.dump({"additive": result.additive, "prefix_identical": result.prefix_identical,
+                   "parses": result.parses, "ids_monotonic": result.ids_monotonic,
+                   "green_preserved": result.green_preserved, "ran": result.ran,
+                   "added": list(result.added_ids), "removed": list(result.removed_ids),
+                   "report": result.report(), "unified_diff": diff,
+                   "wrote": bool(args.file) and not args.dry_run and not blocked}, sys.stdout)
+        sys.stdout.write("\n")
+        return code
+
+    print(result.report(), file=sys.stderr)
+    if blocked:
+        print(diff, file=sys.stderr)
+        print(f"vibe-fim: not provably additive — not writing (use --allow-broken)", file=sys.stderr)
+        return code
+    if args.file and not args.dry_run:
+        path.write_text(result.text, encoding="utf-8")
+        sys.stderr.write(f"wrote {args.file} (+{len(result.added_ids)} tests)\n")
     elif args.file and args.dry_run:
         sys.stdout.write(diff or "(no change)\n")
     else:

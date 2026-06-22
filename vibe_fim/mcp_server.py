@@ -124,6 +124,39 @@ def _build_server():
             status = "NOT written — transaction rejected (result does not parse)"
         return f"{result.scope_report()}\n\nstatus: {status}\n\n{diff or '(no change)'}"
 
+    @server.tool()
+    def grow_tests(file: str, focus: str = "", model: str = "codestral-latest",
+                   dry_run: bool = True) -> str:
+        """Append PROVABLY-additive pytest tests to a file. Generates new test_*
+        functions via Codestral FIM and proves the change is additive: the
+        pre-existing tests are byte-identical, the file parses, and a real pytest
+        run shows every old test kept its outcome while the new tests executed. If
+        the proof fails, nothing is written. Generated tests are CANDIDATES —
+        review them for meaning. Returns the proof report + node-id delta + diff."""
+        from .testgen import grow_tests as _grow, pytest_runner
+
+        path = Path(file)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"ERROR: cannot read {file}: {exc}"
+        backend = functools.partial(codestral_fim, model=model)
+        try:
+            result = _grow(original, filename=file, focus=focus,
+                           fim_fn=backend, runner=pytest_runner)
+        except FimError as exc:
+            return f"ERROR: {exc}"
+        diff = "".join(difflib.unified_diff(
+            original.splitlines(keepends=True), result.text.splitlines(keepends=True),
+            fromfile=f"a/{file}", tofile=f"b/{file}"))
+        wrote = False
+        if not dry_run and result.additive:
+            path.write_text(result.text, encoding="utf-8")
+            wrote = True
+        status = "wrote file" if wrote else (
+            "NOT written — not provably additive" if not result.additive else "dry run (not written)")
+        return f"{result.report()}\n\nstatus: {status}\n\n{diff or '(no change)'}"
+
     return server
 
 

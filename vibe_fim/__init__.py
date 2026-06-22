@@ -15,15 +15,18 @@ from .fim import (
     patch_region,
     patch_regions,
 )
+from .testgen import GrowTestsResult, grow_tests
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "patch_region",
     "patch_regions",
+    "grow_tests",
     "codestral_fim",
     "PatchResult",
     "MultiPatchResult",
+    "GrowTestsResult",
     "FimError",
     "DEFAULT_MODEL",
     "__version__",

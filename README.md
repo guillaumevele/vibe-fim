@@ -86,6 +86,31 @@ Edits must be in file order and non-overlapping; an ambiguous/missing anchor, an
 overlap, or a non-parsing result rejects the **whole** transaction (nothing is
 applied). `from vibe_fim import patch_regions` for the same as a library call.
 
+### Grow tests, provably additive
+
+`grow-tests` uses FIM to append new `test_*` functions and **proves the change is
+additive** — your green tests stay green *by execution*, not by hope:
+
+```bash
+vibe-fim grow-tests --file tests/test_app.py --focus "edge cases" --json
+```
+
+A four-part gate, all-or-nothing (nothing is written unless all hold):
+
+1. **byte-identical prefix** — the original file is prepended verbatim, so every
+   pre-existing test is the same source (not regenerated-and-hopefully-equal);
+2. **parses** — the assembled file still parses;
+3. **node-ids monotonic** — a real pytest run collects every old test id plus the
+   new ones (nothing renamed, removed, or shadowed by a duplicate name);
+4. **green stays green** — each pre-existing test keeps the outcome it had on the
+   original file, and each new test actually executed.
+
+The pytest run *is* the proof (via the builtin `--junit-xml` channel — no plugin
+dep). Exit 4 if the additive proof fails; exit 3 if it does not parse. Generated
+tests are **candidates — review them for meaning**: the gate proves they are
+additive and that they *run*, not that they are good tests. A live Codestral run,
+replayable offline, is committed at [`examples/GROW_TESTS_RECEIPT.md`](examples/GROW_TESTS_RECEIPT.md).
+
 ### Agent-callable
 
 An agent shells out and consumes a stable JSON contract — no screen-scraping:
