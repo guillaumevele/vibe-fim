@@ -86,14 +86,20 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(str(exc), args.json, code=1)
 
     diff = _diff(original, result.text, name or "input")
-    parse_failed = result.parses is False
-    will_write = bool(args.file) and not args.dry_run and (not parse_failed or args.allow_broken)
 
-    if args.file and parse_failed and not args.allow_broken and not args.dry_run:
-        # The headline verification just failed — refuse to write by default.
+    # The headline verification failed — never emit the broken result anywhere a
+    # caller might capture it (a written file OR stdout, which an agent may pipe
+    # to a file), on ANY input path. Signal with exit 3.
+    if result.parses is False and not args.allow_broken:
+        msg = "patched result does not parse (use --allow-broken to override)"
+        if args.json:
+            return _fail(msg, True, code=3, result=result, diff=diff)
         print(result.scope_report(), file=sys.stderr)
-        return _fail("patched result does not parse; not writing (use --allow-broken)",
-                     args.json, code=3, result=result, diff=diff)
+        print(diff, file=sys.stderr)
+        print(f"vibe-fim: {msg}", file=sys.stderr)
+        return 3
+
+    will_write = bool(args.file) and not args.dry_run
 
     if will_write:
         path.write_text(result.text, encoding="utf-8")

@@ -40,9 +40,13 @@ def _build_server():
     ) -> str:
         """Rewrite ONLY the region between two unique anchors using Codestral
         fill-in-the-middle. The prefix and suffix are byte-identical to the
-        original — the edit is provably bounded — and the result is rejected if
-        it no longer parses. Returns the scope report and unified diff so the
-        edit's bounds are visible, not just a success flag.
+        original — the edit is provably bounded. Returns the scope report and
+        unified diff so the edit's bounds are visible, not just a success flag.
+
+        Parse safety net: for Python (.py) the patched file is re-parsed and a
+        non-parsing result is NOT written. For other languages the result is
+        written without a syntactic check (the report shows no PARSES tag) —
+        review the returned diff.
 
         - file:          path to the file to edit.
         - before_anchor: unique line; the frozen prefix ends right after it.

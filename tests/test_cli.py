@@ -88,6 +88,31 @@ def test_text_mode_prints_result(monkeypatch, capsys):
     assert "y = 2" in capsys.readouterr().out
 
 
+def test_text_parse_failure_exit_3_no_corrupt_stdout(monkeypatch, capsys):
+    monkeypatch.setattr("vibe_fim.cli.codestral_fim", _fake_backend("\n    return (((\n    "))
+    code = cli.main(["patch", "--text", PY, "--before", "# X", "--after", "# Y", "--name", "m.py"])
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "return (((" not in out          # corrupted code must NOT reach stdout
+
+
+def test_stdin_parse_failure_exit_3(monkeypatch):
+    import io
+    monkeypatch.setattr("vibe_fim.cli.codestral_fim", _fake_backend("\n    return (((\n    "))
+    monkeypatch.setattr("sys.stdin", io.StringIO(PY))
+    code = cli.main(["patch", "--stdin", "--before", "# X", "--after", "# Y", "--name", "m.py"])
+    assert code == 3
+
+
+def test_text_parse_failure_json_exit_3(monkeypatch, capsys):
+    monkeypatch.setattr("vibe_fim.cli.codestral_fim", _fake_backend("\n    return (((\n    "))
+    code = cli.main(["patch", "--text", PY, "--before", "# X", "--after", "# Y",
+                     "--name", "m.py", "--json"])
+    record = json.loads(capsys.readouterr().out)
+    assert code == 3
+    assert record["parses"] is False and "error" in record
+
+
 def test_no_subcommand_errors():
     with pytest.raises(SystemExit):
         cli.main([])

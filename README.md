@@ -138,7 +138,7 @@ Two separate claims, kept separate:
 
 ```
 surgical FIM      : 0 lines changed outside target
-block regeneration: 2 lines changed outside target   # dropped the file's trailing newline
+block regeneration: 2 lines changed outside target   # one source line: its trailing newline dropped (counted as a -/+ diff pair)
 ```
 
 It runs **offline** by default (no key, same numbers for every reviewer); pass

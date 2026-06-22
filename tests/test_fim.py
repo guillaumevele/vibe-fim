@@ -149,6 +149,28 @@ def test_same_line_echo_is_deduplicated():
     assert result.trimmed_overlap == 14
 
 
+def test_short_full_line_echo_is_deduplicated():
+    # A short marker line (< 4 non-whitespace chars) re-emitted WHOLE is still an
+    # echo — the threshold must not let `# x` / `});` slip through duplicated.
+    text = "a=1\n#M\nbody\n# x\nb=2\n"
+    result = patch_region(text, "#M", "# x", fim_fn=lambda p, s: "\nnew\n# x\n")
+    assert result.text.count("# x") == 1
+    assert result.trimmed_overlap == 4  # "# x\n"
+
+
+def test_hint_comment_echo_is_not_written():
+    # A real FIM model can re-emit the injected hint comment at the head of the
+    # middle. It must be stripped — the hint is never written to the file.
+    text = "def f():\n    # A\n    old\n    # B\n    return 1\n"
+
+    def echo_hint(prefix, suffix):
+        return "# round it up\n    y = 2\n    "
+
+    result = patch_region(text, "# A", "# B", hint="round it up",
+                          filename="m.py", fim_fn=echo_hint)
+    assert "round it up" not in result.text
+
+
 def test_boundary_newline_is_not_trimmed():
     # The middle's trailing newline coincides with the suffix's leading newline.
     # That is coincidental formatting, not a re-emitted line — it must be kept,
@@ -206,6 +228,17 @@ def test_none_content_raises():
 
     with _patched_urlopen(fake_urlopen):
         with pytest.raises(FimError, match="empty completion|empty content"):
+            codestral_fim("p", "s", api_key="k")
+
+
+def test_empty_string_completion_raises():
+    def fake_urlopen(req, timeout=None):
+        body = json.dumps({"choices": [{"message": {"content": ""},
+                                        "finish_reason": "stop"}]}).encode()
+        return _FakeResp(body)
+
+    with _patched_urlopen(fake_urlopen):
+        with pytest.raises(FimError, match="empty"):
             codestral_fim("p", "s", api_key="k")
 
 

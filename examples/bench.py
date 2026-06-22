@@ -76,7 +76,6 @@ def load_live() -> tuple[str, str, str]:
         {"role": "user", "content": f"Edit request: {EDIT}.\n\nFile:\n{before}"},
     ])
     # For the surgical path, capture a real FIM middle for the target region.
-    end = before.index(ANCHOR_BEFORE) + len(ANCHOR_BEFORE)
     fim_middle = patch_region(before, ANCHOR_BEFORE, ANCHOR_AFTER,
                               hint="round the result to 1 decimal place",
                               filename="units.py").new_middle

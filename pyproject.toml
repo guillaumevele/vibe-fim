@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibe-fim"
-version = "0.2.0"
+version = "0.2.1"
 description = "Bounded AI code edits via Codestral fill-in-the-middle: rewrite only the region between two anchors, the rest stays byte-identical."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -83,7 +83,7 @@ def codestral_fim(
             f"completion truncated at max_tokens={max_tokens}; the middle is "
             "incomplete — raise max_tokens and retry."
         )
-    if content is None:
+    if content is None or content == "":
         raise FimError("Codestral FIM returned empty content (no middle).")
     return content
 
@@ -140,16 +140,22 @@ class PatchResult:
         return report
 
 
-# A real re-emission duplicates actual code. We measure that by the overlap's
-# NON-WHITESPACE content: a boundary newline or indentation (`\n`, `\n    `)
-# strips to nothing and is coincidental formatting, not an echo; a shared `}` is
-# one char and coincidental; a run of at least this many non-whitespace chars
-# (same line or across lines) is a genuine re-emission and gets stripped.
+# Distinguish a real re-emission from coincidental boundary formatting:
+#   - a lone boundary newline or indentation (`\n`, `\n    `) strips to nothing
+#     → coincidence, keep it;
+#   - a single shared `}` or `);` on one line is short and ambiguous → keep it;
+#   - a run of >= _MIN_ECHO_CHARS non-whitespace on one line, OR a re-emitted
+#     COMPLETE line (contains a newline and has real content), is a genuine echo
+#     → strip it. The whole-line rule catches short markers like `# x` / `});`
+#     that fall under the char threshold but are unambiguous when re-emitted whole.
 _MIN_ECHO_CHARS = 4
 
 
 def _is_echo(segment: str) -> bool:
-    return len(segment.strip()) >= _MIN_ECHO_CHARS
+    stripped = segment.strip()
+    if not stripped:
+        return False  # only whitespace / a boundary newline — coincidental
+    return len(stripped) >= _MIN_ECHO_CHARS or "\n" in segment
 
 
 def _trim_boundary_overlap(middle: str, prefix: str, suffix: str) -> tuple[str, int]:
@@ -273,7 +279,10 @@ def patch_region(
     raw_middle = fim_fn(fim_prefix, suffix)
 
     # Guard against the model re-emitting whole lines of the frozen prefix/suffix.
-    new_middle, trimmed = _trim_boundary_overlap(raw_middle, prefix, suffix)
+    # Use `fim_prefix` (prefix + hint comment) on the prefix side: a model that
+    # echoes the injected hint comment at the head of the middle is detected and
+    # stripped, so the hint never leaks into the written file.
+    new_middle, trimmed = _trim_boundary_overlap(raw_middle, fim_prefix, suffix)
 
     new_text = prefix + new_middle + suffix
     # Structural invariant (true by construction); kept as a cheap guard.
