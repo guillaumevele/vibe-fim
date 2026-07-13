@@ -37,6 +37,24 @@ def test_write_path_mutates_file(tmp_path, monkeypatch):
     assert f.read_text().startswith("def f():\n    # X")
 
 
+def test_write_path_preserves_crlf_bytes_outside_region(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "vibe_fim.cli.codestral_fim",
+        _fake_backend("\r\n    y = 2\r\n    "),
+    )
+    f = tmp_path / "m.py"
+    f.write_bytes(b"def f():\r\n    # X\r\n    pass\r\n    # Y\r\n    return 1\r\n")
+
+    code = cli.main([
+        "patch", "--file", str(f), "--before", "# X", "--after", "# Y",
+    ])
+
+    assert code == 0
+    assert f.read_bytes() == (
+        b"def f():\r\n    # X\r\n    y = 2\r\n    # Y\r\n    return 1\r\n"
+    )
+
+
 def test_missing_anchor_exit_1(tmp_path, monkeypatch):
     monkeypatch.setattr("vibe_fim.cli.codestral_fim", _fake_backend("x"))
     f = tmp_path / "m.py"
