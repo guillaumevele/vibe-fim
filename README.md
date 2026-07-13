@@ -2,7 +2,7 @@
 
 **Bounded AI code edits via Codestral fill-in-the-middle.** Rewrite only the
 region between two anchors — the rest of the file comes out *byte-for-byte
-identical*, by construction.
+identical*, by construction, including existing LF, CRLF, or CR line endings.
 
 [![CI](https://github.com/guillaumevele/vibe-fim/actions/workflows/ci.yml/badge.svg)](https://github.com/guillaumevele/vibe-fim/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
@@ -13,7 +13,7 @@ identical*, by construction.
 
 ## Why this exists
 
-Most coding agents edit by **regenerating a block** and pasting it back. The
+Many AI editing workflows **regenerate a block** and paste it back. The
 model re-emits your whole function (or file) token by token, so it can *silently*
 change things you never asked it to touch — reflow a comment, drop a trailing
 newline, "fix" an unrelated line, normalise quotes.
@@ -28,10 +28,10 @@ primitive. The bytes outside the region are the original slices, concatenated
 unchanged — so *bounded scope* is structural. On top of that it runs the checks
 that can actually **fail** (below), so a bad completion is caught, not shipped.
 
-> No agent CLI exposes a *verified bounded-edit* primitive. Claude Code and Codex
-> edit by regenerating blocks; plain `vibe` has no FIM patch op. Codestral's FIM
-> is what makes a provably-bounded edit possible, and `vibe-fim` turns it into one
-> an agent can call and check.
+`vibe-fim` packages Codestral FIM as an agent-callable bounded-edit primitive,
+with a scope report and a parse check where the standard library supports the
+language. Bounded scope does not prove semantic correctness or runtime behavior;
+those remain downstream checks.
 
 ## Install
 
@@ -68,7 +68,7 @@ parses, the CLI **refuses to write** (exit 3) unless you pass `--allow-broken`.
 ### Many edits, one transaction
 
 `patch-many` applies **N bounded edits to one file as a single all-or-nothing
-transaction** — the thing the FIM ecosystem (all autocomplete) does not do. Every
+transaction**. Every
 segment *between and around* the regions stays byte-identical, the assembled file
 is parse-checked **once**, and the whole result is written or nothing is. A model
 that drifts in one region cannot corrupt the others; a result that doesn't parse
@@ -208,7 +208,8 @@ vibe-fim-mcp          # stdio MCP server exposing one tool: surgical_patch
 
 The tool returns the unified diff plus the scope report, so the agent sees the
 bounded proof — not just a success flag. (The base package stays
-zero-dependency; the `mcp` SDK is pulled in only by the `[mcp]` extra.)
+zero-dependency; the `mcp` SDK is pulled in only by the `[mcp]` extra. The core
+CLI supports Python 3.9+; the MCP extra requires Python 3.10+.)
 
 ## How it works
 

@@ -13,12 +13,19 @@ from __future__ import annotations
 
 import difflib
 import functools
+import sys
 from pathlib import Path
 
 from .fim import FimError, codestral_fim, patch_region
+from .text_io import read_utf8_preserving_newlines, write_utf8_preserving_newlines
 
 
 def _build_server():
+    if sys.version_info < (3, 10):  # pragma: no cover - version-specific guard
+        raise SystemExit(
+            "vibe-fim-mcp requires Python 3.10 or newer; "
+            "the core vibe-fim CLI continues to support Python 3.9."
+        )
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:  # pragma: no cover - exercised via the extra
@@ -56,7 +63,7 @@ def _build_server():
         """
         path = Path(file)
         try:
-            original = path.read_text(encoding="utf-8")
+            original = read_utf8_preserving_newlines(path)
         except OSError as exc:
             return f"ERROR: cannot read {file}: {exc}"
 
@@ -74,7 +81,7 @@ def _build_server():
         ))
         wrote = False
         if not dry_run and result.parses is not False:
-            path.write_text(result.text, encoding="utf-8")
+            write_utf8_preserving_newlines(path, result.text)
             wrote = True
 
         status = "wrote file" if wrote else "dry run (not written)"
@@ -100,7 +107,7 @@ def _build_server():
 
         path = Path(file)
         try:
-            original = path.read_text(encoding="utf-8")
+            original = read_utf8_preserving_newlines(path)
         except OSError as exc:
             return f"ERROR: cannot read {file}: {exc}"
         spec = [{"before": e.get("before_anchor", e.get("before", "")),
@@ -117,7 +124,7 @@ def _build_server():
             fromfile=f"a/{file}", tofile=f"b/{file}"))
         wrote = False
         if not dry_run and result.parses is not False:
-            path.write_text(result.text, encoding="utf-8")
+            write_utf8_preserving_newlines(path, result.text)
             wrote = True
         status = "wrote file" if wrote else "dry run (not written)"
         if result.parses is False:
@@ -137,7 +144,7 @@ def _build_server():
 
         path = Path(file)
         try:
-            original = path.read_text(encoding="utf-8")
+            original = read_utf8_preserving_newlines(path)
         except OSError as exc:
             return f"ERROR: cannot read {file}: {exc}"
         backend = functools.partial(codestral_fim, model=model)
@@ -151,7 +158,7 @@ def _build_server():
             fromfile=f"a/{file}", tofile=f"b/{file}"))
         wrote = False
         if not dry_run and result.additive:
-            path.write_text(result.text, encoding="utf-8")
+            write_utf8_preserving_newlines(path, result.text)
             wrote = True
         status = "wrote file" if wrote else (
             "NOT written — not provably additive" if not result.additive else "dry run (not written)")

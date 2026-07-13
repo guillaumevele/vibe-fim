@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibe-fim"
-version = "0.4.0"
+version = "0.4.1"
 description = "Bounded AI code edits via Codestral fill-in-the-middle: rewrite only the region between two anchors, the rest stays byte-identical."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,7 +35,7 @@ vibe-fim-mcp = "vibe_fim.mcp_server:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.2; python_version >= '3.10'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibe_fim"]

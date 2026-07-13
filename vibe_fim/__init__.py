@@ -17,7 +17,7 @@ from .fim import (
 )
 from .testgen import GrowTestsResult, grow_tests
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "patch_region",

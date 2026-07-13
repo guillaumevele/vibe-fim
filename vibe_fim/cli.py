@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import __version__
 from .fim import DEFAULT_MODEL, FimError, codestral_fim, patch_region
+from .text_io import read_utf8_preserving_newlines, write_utf8_preserving_newlines
 
 
 def _diff(old: str, new: str, path: str) -> str:
@@ -102,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.file:
         path = Path(args.file)
         try:
-            original = path.read_text(encoding="utf-8")
+            original = read_utf8_preserving_newlines(path)
         except OSError as exc:
             return _fail(f"cannot read {args.file}: {exc}", args.json, code=2)
         name = args.file
@@ -138,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     will_write = bool(args.file) and not args.dry_run
 
     if will_write:
-        path.write_text(result.text, encoding="utf-8")
+        write_utf8_preserving_newlines(path, result.text)
 
     if args.json:
         json.dump(_json_record(result, diff=diff, wrote=will_write), sys.stdout)
@@ -159,7 +160,8 @@ def _resolve_source(args):
     """Return (original_text, name, path_or_None) for --file/--text/--stdin."""
     if args.file:
         try:
-            return Path(args.file).read_text(encoding="utf-8"), args.file, Path(args.file)
+            path = Path(args.file)
+            return read_utf8_preserving_newlines(path), args.file, path
         except OSError as exc:
             raise FimError(f"cannot read {args.file}: {exc}")
     if getattr(args, "stdin", False):
@@ -204,7 +206,7 @@ def _cmd_patch_many(args) -> int:
 
     will_write = bool(args.file) and not args.dry_run
     if will_write:
-        path.write_text(result.text, encoding="utf-8")
+        write_utf8_preserving_newlines(path, result.text)
 
     if args.json:
         json.dump({"bounded": result.bounded, "parses": result.parses,
@@ -265,7 +267,7 @@ def _cmd_grow_tests(args) -> int:
         print(f"vibe-fim: not provably additive — not writing (use --allow-broken)", file=sys.stderr)
         return code
     if args.file and not args.dry_run:
-        path.write_text(result.text, encoding="utf-8")
+        write_utf8_preserving_newlines(path, result.text)
         sys.stderr.write(f"wrote {args.file} (+{len(result.added_ids)} tests)\n")
     elif args.file and args.dry_run:
         sys.stdout.write(diff or "(no change)\n")
