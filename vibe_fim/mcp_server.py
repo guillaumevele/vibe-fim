@@ -14,10 +14,10 @@ from __future__ import annotations
 import difflib
 import functools
 import sys
-from pathlib import Path
 
 from .fim import FimError, codestral_fim, patch_region
 from .text_io import read_utf8_preserving_newlines, write_utf8_preserving_newlines
+from .workspace import WorkspaceError, resolve_in_workspace
 
 
 def _build_server():
@@ -55,16 +55,20 @@ def _build_server():
         written without a syntactic check (the report shows no PARSES tag) —
         review the returned diff.
 
-        - file:          path to the file to edit.
+        - file:          path to the file to edit, inside the workspace root
+                         (the server's start directory, or $VIBE_FIM_ROOT).
         - before_anchor: unique line; the frozen prefix ends right after it.
         - after_anchor:  unique line; the frozen suffix starts right at it.
         - instruction:   optional steer (sent as a comment, never written).
         - dry_run:       when true (default), do not write — only show the diff.
         """
-        path = Path(file)
+        try:
+            path = resolve_in_workspace(file)
+        except WorkspaceError as exc:
+            return f"ERROR: {exc}"
         try:
             original = read_utf8_preserving_newlines(path)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             return f"ERROR: cannot read {file}: {exc}"
 
         backend = functools.partial(codestral_fim, model=model)
@@ -105,10 +109,13 @@ def _build_server():
         report + unified diff."""
         from .fim import patch_regions
 
-        path = Path(file)
+        try:
+            path = resolve_in_workspace(file)
+        except WorkspaceError as exc:
+            return f"ERROR: {exc}"
         try:
             original = read_utf8_preserving_newlines(path)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             return f"ERROR: cannot read {file}: {exc}"
         spec = [{"before": e.get("before_anchor", e.get("before", "")),
                  "after": e.get("after_anchor", e.get("after", "")),
@@ -142,10 +149,13 @@ def _build_server():
         review them for meaning. Returns the proof report + node-id delta + diff."""
         from .testgen import grow_tests as _grow, pytest_runner
 
-        path = Path(file)
+        try:
+            path = resolve_in_workspace(file)
+        except WorkspaceError as exc:
+            return f"ERROR: {exc}"
         try:
             original = read_utf8_preserving_newlines(path)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             return f"ERROR: cannot read {file}: {exc}"
         backend = functools.partial(codestral_fim, model=model)
         try:
