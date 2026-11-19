@@ -211,6 +211,14 @@ bounded proof — not just a success flag. (The base package stays
 zero-dependency; the `mcp` SDK is pulled in only by the `[mcp]` extra. The core
 CLI supports Python 3.9+; the MCP extra requires Python 3.10+.)
 
+The MCP tools only read and write files under one workspace root: the
+directory the server was started in, or `VIBE_FIM_ROOT` when set. A path that
+resolves outside it (absolute, `..`, or through a symlink) is refused before
+anything is read or sent to the model. `grow_tests` runs the candidate test
+file with pytest on your machine to prove the change is additive: treat it
+like running the project's own test suite, and do not point it at code you
+would not execute.
+
 ## How it works
 
 1. Locate the unique `before` and `after` anchors.
